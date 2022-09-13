@@ -1,4 +1,7 @@
+from dotenv import load_dotenv
+from os import getenv
 from decimal import Decimal
+# from typing import Optional
 import aioredis
 import aiohttp
 from re import match
@@ -16,10 +19,21 @@ class CBRExchangeRate:
         self.__base_url = "http://www.cbr.ru"
         self.__exchange_script = "/scripts/XML_daily.asp"
         self.__currencies_descriptions = "/scripts/XML_valFull.asp"
-        self.__redis_url = "redis://localhost"
 
-        self.__session = aiohttp.ClientSession(self.__base_url)
-        self.__redis = aioredis.from_url("redis://localhost", username="bot", password="CzsqvJwjY3U5!9SD")
+        try:
+
+            load_dotenv(override=True)
+            redis_host = getenv('REDIS_HOST', default='localhost')
+            redis_port = getenv('REDIS_PORT', default='6379')
+            redis_user = getenv('REDIS_USER', default='user')
+            redis_password = getenv('REDIS_PASSWORD')
+            self.__redis_url = f"redis://{redis_host}:{redis_port}"
+
+            self.__session = aiohttp.ClientSession(self.__base_url)
+            self.__redis = aioredis.from_url("redis://localhost", username=redis_user, password=redis_password)
+
+        except Exception as ex:
+            log_exception("Ошибка инициализации основного объекта:", ex)
 
     async def __aenter__(self):
         return self
@@ -106,19 +120,22 @@ class CBRExchangeRate:
         except Exception as ex:
             log_exception("Не удалось сохранить курс:\n", ex)
 
-    async def __get_exchange_rate(self, currency: str, key_date: str) -> str:
+    async def __get_exchange_rate(self, currency: str, key_date: str) -> str | None:
         """
-        Request exchahge rates from redis
-        :param currency: the currency wich rate you need
+        Request exchange rates from redis
+        :param currency: the currency which rate you need
         :type currency: str
-        :param key_date: the key, which is a date for exchage rate in format "dd/mm/yyyy"
+        :param key_date: the key, which is a date for exchange rate in format "dd/mm/yyyy"
         :type key_date: str
         :return: the exchange rate of currency for given date in format nominal=cost
         :rtype: str
         """
 
         try:
-            return (await self.__redis.hget(name=currency, key=key_date)).decode()
+            if await self.__redis.hexists(name=currency, key=key_date):
+                return (await self.__redis.hget(name=currency, key=key_date)).decode()
+            else:
+                return None
 
         except Exception as ex:
             log_exception(f"Не удалось получить курс валюты на дату {key_date}:\n", ex)
@@ -137,7 +154,7 @@ class CBRExchangeRate:
             if match(r'\d\d/\d\d/\d\d\d\d', exchange_date):
 
                 exchange_rate = await self.__get_exchange_rate(currency_code, exchange_date)
-                if exchange_rate:
+                if exchange_rate is not None:
                     nominal, cost = exchange_rate.split('=', 1)
                     exchange_currency['code'] = currency_code.upper()
                     exchange_currency['nominal'] = int(nominal)
