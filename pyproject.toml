@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "cbr-exchange-rates"
+version = "0.3.0"
+description = "A tool for getting exchange rates from the Central Bank of Russia site"
+authors = ["Victor Kozlov <vick23@mail.ru>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "cbr_exchange_rates"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+aiohttp = "^3.8.1"
+aioredis = "^2.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
