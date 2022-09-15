@@ -16,6 +16,19 @@ class CBRExchangeRate:
     """
 
     def __init__(self):
+        """
+        Инициализация экземпляра класса.
+        Значения по-умолчанию:
+            base_url = "http://www.cbr.ru"
+            exchange_script = "/scripts/XML_daily.asp"
+            currencies_descriptions = "/scripts/XML_valFull.asp"
+            redis_host = getenv('REDIS_HOST', default='localhost')
+            redis_port = getenv('REDIS_PORT', default='6379')
+            redis_user = getenv('REDIS_USER', default='user')
+            redis_password = getenv('REDIS_PASSWORD')
+            redis_url = f"redis://{redis_host}:{redis_port}"
+        """
+
         self.__base_url = "http://www.cbr.ru"
         self.__exchange_script = "/scripts/XML_daily.asp"
         self.__currencies_descriptions = "/scripts/XML_valFull.asp"
@@ -30,17 +43,48 @@ class CBRExchangeRate:
             self.__redis_url = f"redis://{redis_host}:{redis_port}"
 
             self.__session = aiohttp.ClientSession(self.__base_url)
-            self.__redis = aioredis.from_url("redis://localhost", username=redis_user, password=redis_password)
+            self.__redis = aioredis.from_url("redis://localhost",
+                                             username=redis_user,
+                                             password=redis_password,
+                                             decode_responses=True)
 
         except Exception as ex:
             log_exception("Ошибка инициализации основного объекта:", ex)
 
     async def __aenter__(self):
+        """
+        Методы поддержки контекстного менеджера
+        """
+
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """
+        Методы поддержки контекстного менеджера
+        """
+
         await self.__session.close()
         return True
+
+    async def __redis_connected(self) -> bool:
+        """
+        Проверка подключения к Redis
+        :return: True если подключение к серверу доступно.
+        :rtype: bool
+        """
+
+        try:
+            result = await self.__redis.ping()
+            if result:
+                return True
+            return False
+        except aioredis.exceptions.ConnectionError as conn_err:
+            log_exception("Connection error.", conn_err)
+            return False
+        except Exception as ex:
+            print(type(ex))
+            log_exception("Нет подключения к Redis.\n", ex)
+            return False
 
     async def __fetch_currencies(self, **kwargs) -> str:
         """
@@ -132,8 +176,8 @@ class CBRExchangeRate:
         """
 
         try:
-            if await self.__redis.hexists(name=currency, key=key_date):
-                return (await self.__redis.hget(name=currency, key=key_date)).decode()
+            if await self.__redis_connected() and await self.__redis.hexists(name=currency, key=key_date):
+                return await self.__redis.hget(name=currency, key=key_date)
             else:
                 return None
 
@@ -171,10 +215,11 @@ class CBRExchangeRate:
                             exchange_currency['cost_str'] = f"\u20BD {currency.find('Value').text}"
 
                             # Save the exchange rate to redis
-                            await self.__store_exchange_rate(
-                                    currency_code.upper(),
-                                    exchange_date,
-                                    f"{exchange_currency['nominal']}={currency.find('Value').text}")
+                            if await self.__redis_connected():
+                                await self.__store_exchange_rate(
+                                        currency_code.upper(),
+                                        exchange_date,
+                                        f"{exchange_currency['nominal']}={currency.find('Value').text}")
                             break
 
             else:
